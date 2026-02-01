@@ -18,7 +18,6 @@ Hệ thống ingestion chuyển đổi dữ liệu văn bản luật đã làm s
 2_ingestion/
 ├── ingestion_pipeline.py      # Pipeline chính - xử lý từ JSON → FAISS
 ├── demo_retrieval.py          # Script demo tìm kiếm semantic search
-├── requirements.txt           # Dependencies (LangChain, FAISS, SentenceTransformers)
 ├── README.md                  # Tài liệu này
 └── output/                    # Output directory (tự động tạo)
     ├── law_documents_index_config.json  # Metadata cấu hình (317 bytes)
@@ -27,18 +26,22 @@ Hệ thống ingestion chuyển đổi dữ liệu văn bản luật đã làm s
         └── index.pkl          # Document metadata & docstore (441 KB)
 ```
 
+**Lưu ý**: Dependencies được quản lý tập trung tại [requirements.txt](../../requirements.txt) ở thư mục gốc.
+
 ## 🚀 Hướng dẫn sử dụng
 
 ### Bước 1: Cài đặt dependencies
 
 ```bash
+cd F:\3.Laptrinh\EnglishforIT
 pip install -r requirements.txt
 ```
 
-Packages cần thiết:
+Packages cần thiết (xem [requirements.txt](../../requirements.txt)):
 - `langchain` + `langchain-community` + `langchain-huggingface`: Framework RAG
 - `sentence-transformers`: Tạo embeddings
 - `faiss-cpu`: Vector database
+- `rank-bm25`: BM25 retrieval
 - `numpy`: Xử lý mảng
 
 ### Bước 2: Chạy ingestion pipeline
