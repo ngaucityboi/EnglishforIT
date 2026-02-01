@@ -21,9 +21,10 @@ from langchain_community.vectorstores import FAISS
 # CONFIGURATION
 # ============================================================================
 
-# Đường dẫn input/output
-INPUT_DIR = Path("../../data/input")
-OUTPUT_DIR = Path("./output")
+# Đường dẫn tuyệt đối dựa trên vị trí script
+SCRIPT_DIR = Path(__file__).parent
+INPUT_DIR = SCRIPT_DIR.parent.parent / "data" / "input"
+OUTPUT_DIR = SCRIPT_DIR / "output"
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 # Các file JSON cần xử lý
@@ -277,6 +278,12 @@ def main():
     
     # Bước 2: Chuyển đổi thành Documents
     documents = create_documents(all_data)
+    
+    # Kiểm tra có documents không
+    if len(documents) == 0:
+        print("\n❌ Lỗi: Không có documents nào để xử lý!")
+        print("   Vui lòng kiểm tra lại đường dẫn files và nội dung dữ liệu.")
+        return
     
     # Bước 3: Tạo embeddings và vector store
     vectorstore = create_vector_store(documents)

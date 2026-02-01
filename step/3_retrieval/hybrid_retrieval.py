@@ -6,6 +6,7 @@ Kết hợp BM25 (keyword search) và Dense Embedding (semantic search)
 
 import os
 from typing import List
+from pathlib import Path
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.vectorstores import FAISS
 from langchain_community.retrievers import BM25Retriever
@@ -57,8 +58,9 @@ class EnsembleRetriever(BaseRetriever):
 
 # ==================== CẤU HÌNH ====================
 
-# Đường dẫn FAISS index từ giai đoạn 2
-FAISS_INDEX_PATH = "../2_ingestion/output/law_documents_index"
+# Đường dẫn tuyệt đối dựa trên vị trí script
+SCRIPT_DIR = Path(__file__).parent
+FAISS_INDEX_PATH = SCRIPT_DIR.parent / "2_ingestion" / "output" / "law_documents_index"
 
 # Model embedding (phải giống giai đoạn 2)
 EMBEDDING_MODEL = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
@@ -85,7 +87,7 @@ def load_faiss_vectorstore():
     
     # Load FAISS index
     vectorstore = FAISS.load_local(
-        FAISS_INDEX_PATH,
+        str(FAISS_INDEX_PATH),
         embeddings,
         allow_dangerous_deserialization=True
     )

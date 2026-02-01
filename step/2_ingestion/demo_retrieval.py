@@ -11,7 +11,9 @@ from pathlib import Path
 # CONFIGURATION
 # ============================================================================
 
-INDEX_PATH = Path("output/law_documents_index")
+# Đường dẫn tuyệt đối từ file hiện tại
+SCRIPT_DIR = Path(__file__).parent
+INDEX_PATH = SCRIPT_DIR / "output" / "law_documents_index"
 EMBEDDING_MODEL = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
 
 # Test queries
