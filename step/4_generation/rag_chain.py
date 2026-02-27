@@ -6,10 +6,10 @@ import os
 import time
 from dotenv import load_dotenv
 from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_classic.chains import RetrievalQA
 from langchain_core.prompts import PromptTemplate
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_community.vectorstores import FAISS
+from langchain_core.runnables import RunnablePassthrough
 
 from system_prompt import SYSTEM_PROMPT, PROMPT_TEMPLATE, REFUSAL_RESPONSE
 from refusal_and_citations import REFUSAL_MESSAGES
@@ -76,14 +76,40 @@ def build_rag_chain(temperature=0.1, top_k=5, rebuild_llm=False):
         request_timeout=60  # 60 second timeout
     )
     
-    # 3. Build chain (RetrievalQA manages its own prompt)
-    qa_chain = RetrievalQA.from_chain_type(
-        llm=llm,
-        retriever=retriever,
-        return_source_documents=True,
-        chain_type="stuff",  # Stuff all docs into context
-        verbose=False
-    )
+    # 3. Build custom chain
+    class CustomRAGChain:
+        def __init__(self, llm, retriever, vectorstore, template):
+            self.llm = llm
+            self.retriever = retriever
+            self.vectorstore = vectorstore  # Store for query_rag
+            self.template = template
+        
+        def __call__(self, inputs):
+            query = inputs.get("query") or inputs.get("input", "")
+            
+            # Retrieve documents
+            docs = self.retriever.invoke(query)
+            
+            # Format context
+            context = "\n\n".join([doc.page_content for doc in docs])
+            
+            # Create full prompt
+            full_prompt = self.template.format(context=context, query=query)
+            
+            # Get answer from LLM
+            result = self.llm.invoke(full_prompt)
+            answer = result.content if hasattr(result, 'content') else str(result)
+            
+            return {
+                "result": answer,
+                "source_documents": docs
+            }
+        
+        def invoke(self, inputs):
+            """Alias for __call__"""
+            return self(inputs)
+    
+    qa_chain = CustomRAGChain(llm, retriever, vectorstore, PROMPT_TEMPLATE)
     
     print("✅ RAG chain built successfully")
     return qa_chain
@@ -138,58 +164,22 @@ def query_rag(qa_chain, question: str, max_retries=3) -> dict:
     
     for attempt in range(max_retries):
         try:
-            # STEP 1: Check relevance BEFORE calling LLM
-            # Get the vectorstore from the chain's retriever
-            retriever = qa_chain.retriever
-            vectorstore = retriever.vectorstore
-            
-            # Retrieve with similarity scores
-            docs = vectorstore.similarity_search(question, k=5)
-            
-            if not docs:
-                # No documents found at all
-                return {
-                    "answer": REFUSAL_MESSAGES["no_result"],
-                    "sources": [],
-                    "source_citations": [],
-                    "refused": True
-                }
-            
-            # For FAISS, check if top document is sufficiently long (meaningful)
-            top_doc = docs[0]
-            doc_length = len(top_doc.page_content) if top_doc else 0
-            
-            # If top result is extremely short (< 30 chars), likely not relevant
-            if doc_length < 30:
-                return {
-                    "answer": REFUSAL_MESSAGES["low_confidence"],
-                    "sources": [],
-                    "source_citations": [],
-                    "refused": True
-                }
-            
-            # STEP 2: Proceed with RAG chain only if all checks pass
+            # STEP 1: Query RAG chain
             result = qa_chain({"query": question})
+            answer = result.get("result", "").strip()
             
-            # STEP 3: Post-check - if answer seems like hallucination, refuse
-            # Check if LLM generated an answer using its own knowledge
-            answer = result.get("result", "")
-            
-            # Indicators of hallucination (LLM answering from its own knowledge):
-            hallucination_indicators = [
-                "i am a", "i'm a", "tôi là một", "tôi là một mô hình",
-                "có thể giúp", "xin chào", "hello", "nice to meet",
-                "trained by", "built by", "developed by"
-            ]
-            
-            if any(indicator in answer.lower() for indicator in hallucination_indicators):
-                # LLM is hallucinating - refuse
-                return {
-                    "answer": REFUSAL_MESSAGES["no_result"],
-                    "sources": [],
-                    "source_citations": [],
-                    "refused": True
-                }
+            # Basic validation - answer should not be empty
+            if not answer or len(answer) < 5:
+                if attempt < max_retries - 1:
+                    time.sleep(2)
+                    continue
+                else:
+                    return {
+                        "answer": "Không có câu trả lời phù hợp được tìm thấy.",
+                        "sources": [],
+                        "source_citations": [],
+                        "refused": True
+                    }
             
             # Extract citations from source documents
             citations = []
@@ -199,7 +189,7 @@ def query_rag(qa_chain, question: str, max_retries=3) -> dict:
                     citations.append(citation)
             
             return {
-                "answer": result["result"],
+                "answer": answer,
                 "sources": result.get("source_documents", []),
                 "source_citations": citations,
                 "refused": False
@@ -207,29 +197,10 @@ def query_rag(qa_chain, question: str, max_retries=3) -> dict:
             
         except Exception as e:
             last_error = e
-            error_msg = str(e).lower()
-            
-            # Check if it's an API key/quota error
-            is_quota_error = any(keyword in error_msg for keyword in [
-                "quota", "429", "403", "unauthorized", "invalid", "authentication"
-            ])
-            is_timeout_error = any(keyword in error_msg for keyword in [
-                "timeout", "deadline", "exceeded", "connection"
-            ])
-            
             if attempt < max_retries - 1:
-                if is_quota_error:
-                    print(f"[Attempt {attempt + 1}/{max_retries}] API Key/Quota issue detected")
-                    print(f"[Waiting 5 seconds before retry...]")
-                    time.sleep(5)
-                elif is_timeout_error:
-                    wait_time = 2 ** attempt
-                    print(f"[Attempt {attempt + 1}/{max_retries}] Timeout error, retrying in {wait_time}s...")
-                    time.sleep(wait_time)
-                else:
-                    wait_time = 2 ** attempt
-                    print(f"[Attempt {attempt + 1}/{max_retries}] Error: {str(e)[:60]}...")
-                    time.sleep(wait_time)
+                wait_time = 2 ** attempt
+                print(f"[Attempt {attempt + 1}/{max_retries}] Error: {str(e)[:60]}...")
+                time.sleep(wait_time)
             else:
                 print(f"[Failed after {max_retries} attempts]")
                 break
@@ -251,7 +222,9 @@ def format_output(result: dict) -> str:
         output.append("TRICH DAN PHAP LUAT\n")
         output.append(result["answer"])
         
-        if result.get("source_citations"):
+        # Only show sources if we have an answer and have citations
+        answer = result.get("answer", "").strip()
+        if answer and result.get("source_citations"):
             output.append("\nNguon tham khao:")
             for i, citation in enumerate(result["source_citations"], 1):
                 output.append(f"{i}. {citation}")
